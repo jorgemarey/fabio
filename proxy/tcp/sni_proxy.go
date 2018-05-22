@@ -89,7 +89,7 @@ func (p *SNIProxy) ServeTCP(in net.Conn) error {
 		}
 		return nil
 	}
-
+	log.Printf("[INFO] tcp+sni: new incoming request trying to reach host %s", host)
 	t := p.Lookup(host)
 	if t == nil {
 		if p.Noroute != nil {
@@ -111,6 +111,7 @@ func (p *SNIProxy) ServeTCP(in net.Conn) error {
 		}
 		return err
 	}
+	log.Printf("[INFO] tcp+sni: forwarding connection request %s to %s", host, addr)
 	defer out.Close()
 
 	// write the data already read from the connection
