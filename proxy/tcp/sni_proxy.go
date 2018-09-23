@@ -111,6 +111,13 @@ func (p *SNIProxy) ServeTCP(in net.Conn) error {
 		}
 		return err
 	}
+	start := time.Now()
+	defer func() {
+		dur := time.Now().Sub(start)
+		if t.Timer != nil {
+			t.Timer.Update(dur)
+		}
+	}()
 	log.Printf("[INFO] tcp+sni: forwarding connection request %s to %s", host, addr)
 	defer out.Close()
 
