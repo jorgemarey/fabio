@@ -313,25 +313,44 @@ func (t Table) matchingHosts(req *http.Request) (hosts []string) {
 	return t.matchingHostsStr(req.Host, req.TLS != nil)
 }
 
+func targetHost(hosts []string) string {
+	var globalRedirect string
+	for _, h := range hosts {
+		if strings.HasSuffix(h, ":80") {
+			if strings.Split(h, ":80")[0] != "*" {
+				return h
+			}
+			globalRedirect = h
+		}
+	}
+	if globalRedirect != "" {
+		return globalRedirect
+	}
+	return ""
+}
+
 // Lookup finds a target url based on the current matcher and picker
 // or nil if there is none. It first checks the routes for the host
 // and if none matches then it falls back to generic routes without
 // a host. This is useful for a catch-all '/' rule.
 func (t Table) Lookup(req *http.Request, trace string, pick picker, match matcher) (target *Target) {
+	hosts := t.matchingHosts(req)
+
 	if trace != "" {
 		if len(trace) > 16 {
 			trace = trace[:15]
 		}
 		log.Printf("[TRACE] %s Tracing %s%s", trace, req.Host, req.URL.Path)
 	}
-
-	// find matching hosts for the request
-	// and add "no host" as the fallback option
-	hosts := t.matchingHosts(req)
+	tHost := targetHost(hosts)
 	hosts = append(hosts, "")
 	for _, h := range hosts {
-		if target = t.lookup(h, req.URL.Path, trace, pick, match); target != nil {
+		if tHost == "" {
+			tHost = h
+		}
+		if target = t.lookup(tHost, req.URL.Path, trace, pick, match); target != nil {
 			if target.RedirectCode != 0 {
+				req.URL.Host = req.Host
 				target.BuildRedirectURL(req.URL) // build redirect url and cache in target
 				if target.RedirectURL.Scheme == req.Header.Get("X-Forwarded-Proto") &&
 					target.RedirectURL.Host == req.Host &&
