@@ -292,6 +292,25 @@ func normalizeHost(host string, tls bool) string {
 	return host
 }
 
+type byDots []string
+
+func (s byDots) Len() int {
+	return len(s)
+}
+func (s byDots) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+
+}
+func (s byDots) Less(i, j int) bool {
+	if strings.Count(s[i], ".") < strings.Count(s[j], ".") {
+		return false
+	}
+	if strings.Count(s[i], ".") > strings.Count(s[j], ".") {
+		return true
+	}
+	return s[i] < s[j]
+}
+
 // matchingHostsStr returns all keys (host name patterns) from the
 // routing table which match the normalized host and takes if it is TLS into account.
 func (t Table) matchingHostsStr(host string, isTLS bool) (hosts []string) {
@@ -303,7 +322,6 @@ func (t Table) matchingHostsStr(host string, isTLS bool) (hosts []string) {
 			hosts = append(hosts, pattern)
 		}
 	}
-	//sort.Sort(sort.Reverse(sort.StringSlice(hosts)))
 	sort.Sort(sort.Reverse(sort.StringSlice(hosts)))
 	i := -1
 	for j, v := range hosts {
@@ -313,10 +331,10 @@ func (t Table) matchingHostsStr(host string, isTLS bool) (hosts []string) {
 		}
 	}
 	if i != -1 {
-		sort.Sort(sort.StringSlice(hosts[i:]))
+		sort.Sort(byDots(hosts[i:]))
 	}
-
 	return hosts
+
 }
 
 // matchingHosts returns all keys (host name patterns) from the
@@ -326,7 +344,6 @@ func (t Table) matchingHosts(req *http.Request) (hosts []string) {
 }
 
 func checkHTTPRedirect(req *http.Request, hosts []string) string {
-	fmt.Printf("[INFO] req.Host %s\n", req.Host)
 	if !strings.Contains(req.Host, ":") && req.TLS == nil {
 		for _, h := range hosts {
 			if strings.HasSuffix(h, ":80") {

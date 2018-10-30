@@ -642,6 +642,7 @@ func TestTableLookupGlobalRedirect(t *testing.T) {
 	route add svc *.abc.com/foo/ http://foo.com:5000
 	route add svc *.xyz.com/ https://xyz.com
 	route add svc foo.xyz.com:80/ https://zyx.com
+	route add svc *.d.a.b.com http://test.com
 	`
 
 	tbl, err := NewTable(s)
@@ -714,11 +715,13 @@ func TestTableLookupGlobalRedirect(t *testing.T) {
 
 		// explicit port on route
 		{&http.Request{Host: "s.xyz.com", URL: mustParse("/")}, "https://s.xyz.com/"},
-		{&http.Request{Host: "s.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://foo.com:7000"},
+		{&http.Request{Host: "s.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "https://xyz.com"},
 
 		// just defined 80
 		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/")}, "https://zyx.com"},
-		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://foo.com:7000"},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "https://xyz.com"},
+		{&http.Request{Host: "test.d.a.b.com", URL: mustParse("/")}, "https://test.d.a.b.com/"},
+		{&http.Request{Host: "test.d.a.b.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://test.com"},
 	}
 
 	for i, tt := range tests {
@@ -729,6 +732,65 @@ func TestTableLookupGlobalRedirect(t *testing.T) {
 		}
 		if got, want := url.String(), tt.dst; got != want {
 			t.Errorf("%d: got %v want %v", i, got, want)
+		}
+	}
+}
+
+func TestMatchinHostStr(t *testing.T) {
+	s := `
+	route add redirect *:80/ https://$host/$path opts "redirect=301"
+	route add svc / http://foo.com:800
+	route add svc /foo http://foo.com:900
+	route add svc *.com/ http://foo.com:7000
+	route add svc abc.com/ http://foo.com:1000
+	route add svc abc.com/foo http://foo.com:1500
+	route add svc abc.com/foo/ http://foo.com:2000
+	route add svc abc.com/foo/bar http://foo.com:2500
+	route add svc abc.com/foo/bar/ http://foo.com:3000
+	route add svc z.abc.com/foo/ http://foo.com:3100
+	route add svc *.abc.com/ http://foo.com:4000
+	route add svc *.abc.com/foo/ http://foo.com:5000
+	route add svc *.xyz.com/ https://xyz.com
+	route add svc foo.xyz.com:80/ https://zyx.com
+	route add svc *.a.b.com http://test.com
+	route add svc *.b.com http://test.com
+	route add svc *.com http://test.com
+	route add svc *.abbc.b.com http://test.com
+	route add svc *.d.a.b.com http://test.com
+	`
+	tbl, err := NewTable(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tests = []struct {
+		req *http.Request
+		dst []string
+	}{
+		{&http.Request{Host: "abc.com", URL: mustParse("/")}, []string{"abc.com", "*.com", "*:80"}},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/")}, []string{"foo.xyz.com:80", "*.xyz.com", "*.com", "*:80"}},
+		{&http.Request{Host: "test.d.a.b.com", URL: mustParse("/")}, []string{"*.d.a.b.com", "*.a.b.com", "*.b.com", "*.com", "*:80"}},
+		{&http.Request{Host: "d.a.b.com", URL: mustParse("/")}, []string{"*.a.b.com", "*.b.com", "*.com", "*:80"}},
+		{&http.Request{Host: "abc.com:80", URL: mustParse("/")}, []string{"abc.com", "*.com", "*:80"}},
+		{&http.Request{Host: "def.io:443", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, []string{}},
+		{&http.Request{Host: "def.io", URL: mustParse("/")}, []string{"*:80"}},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/")}, []string{"foo.xyz.com:80", "*.xyz.com", "*.com", "*:80"}},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, []string{"*.xyz.com", "*.com"}},
+	}
+	for i, tt := range tests {
+		hosts := tbl.matchingHostsStr(tt.req.Host, tt.req.TLS != nil)
+		if len(hosts) != len(tt.dst) {
+			t.Errorf("%d: got %v want %v", i, hosts, tt.dst)
+			break
+		}
+		check := 0
+		for k, v := range hosts {
+			if v != tt.dst[k] {
+				check++
+			}
+		}
+		if check > 0 {
+			t.Errorf("%d: got %v want %v", i, hosts, tt.dst)
 		}
 	}
 }
