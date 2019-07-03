@@ -3,6 +3,7 @@ package route
 import (
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/fabiolb/fabio/metrics"
 )
@@ -54,6 +55,8 @@ type Target struct {
 
 	// TimerName is the name of the timer in the metrics registry
 	TimerName string
+
+	FlushInterval time.Duration
 
 	// accessRules is map of access information for the target.
 	accessRules map[string][]interface{}

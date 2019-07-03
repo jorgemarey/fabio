@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fabiolb/fabio/metrics"
 	"github.com/gobwas/glob"
@@ -82,6 +83,14 @@ func (r *Route) addTarget(service string, targetURL *url.URL, fixedWeight float6
 			} else if t.RedirectCode < 300 || t.RedirectCode > 399 {
 				t.RedirectCode = 0
 				log.Printf("[ERROR] redirect status code should be in 3xx range. Got: %s", opts["redirect"])
+			}
+		}
+
+		if fi := opts["flush"]; fi != "" {
+			if duration, err := time.ParseDuration(fi); err != nil {
+				log.Printf("[ERROR] Flush Interval should be a duration. Got: %s", fi)
+			} else {
+				t.FlushInterval = duration
 			}
 		}
 
