@@ -5,12 +5,13 @@ require (
 	github.com/circonus-labs/circonus-gometrics v2.3.1+incompatible
 	github.com/circonus-labs/circonusllhist v0.1.3 // indirect
 	github.com/cyberdelia/go-metrics-graphite v0.0.0-20150826032200-b8345b7f01d5
+	github.com/fatih/structs v1.1.0 // indirect
 	github.com/gobwas/glob v0.0.0-20180208211842-19c076cdf202
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/hashicorp/consul/api v1.1.0
 	github.com/hashicorp/go-retryablehttp v0.5.4 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
-	github.com/hashicorp/vault v0.10.3
+	github.com/hashicorp/vault v0.6.0
 	github.com/magiconair/properties v0.0.0-20171031211101-49d762b9817b
 	github.com/pascaldekloe/goe v0.1.0
 	github.com/pkg/profile v1.2.1
