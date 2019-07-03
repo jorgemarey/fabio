@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -21,11 +22,18 @@ func watchServices(client *api.Client, config *config.Consul, svcConfig chan str
 	var strict bool = strings.EqualFold("all", config.ChecksRequired)
 
 	for {
-		q := &api.QueryOptions{RequireConsistent: true, WaitIndex: lastIndex}
+		q := &api.QueryOptions{RequireConsistent: true, WaitIndex: lastIndex, WaitTime: 5 * time.Minute}
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		q.WithContext(ctx)
 		checks, meta, err := client.Health().State("any", q)
+		cancel()
 		if err != nil {
 			log.Printf("[WARN] consul: Error fetching health state. %v", err)
 			time.Sleep(time.Second)
+			continue
+		}
+
+		if meta.LastIndex == lastIndex {
 			continue
 		}
 

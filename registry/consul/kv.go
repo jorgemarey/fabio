@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"context"
 	"log"
 	"strings"
 	"time"
@@ -47,8 +48,11 @@ func listKeys(client *api.Client, path string, waitIndex uint64) ([]string, uint
 }
 
 func listKV(client *api.Client, path string, waitIndex uint64, separator bool) (string, uint64, error) {
-	q := &api.QueryOptions{RequireConsistent: true, WaitIndex: waitIndex}
+	q := &api.QueryOptions{RequireConsistent: true, WaitIndex: waitIndex, WaitTime: 5 * time.Minute}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	q.WithContext(ctx)
 	kvpairs, meta, err := client.KV().List(path, q)
+	cancel()
 	if err != nil {
 		return "", 0, err
 	}
