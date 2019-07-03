@@ -639,3 +639,172 @@ func TestTableLookup(t *testing.T) {
 		}
 	}
 }
+
+func TestTableLookupGlobalRedirect(t *testing.T) {
+	s := `
+	route add redirect *:80/ https://$host/$path opts "redirect=301"
+	route add svc / http://foo.com:800
+	route add svc /foo http://foo.com:900
+	route add svc *.com/ http://foo.com:7000
+	route add svc abc.com/ http://foo.com:1000
+	route add svc abc.com/foo http://foo.com:1500
+	route add svc abc.com/foo/ http://foo.com:2000
+	route add svc abc.com/foo/bar http://foo.com:2500
+	route add svc abc.com/foo/bar/ http://foo.com:3000
+	route add svc z.abc.com/foo/ http://foo.com:3100
+	route add svc *.abc.com/ http://foo.com:4000
+	route add svc *.abc.com/foo/ http://foo.com:5000
+	route add svc *.xyz.com/ https://xyz.com
+	route add svc foo.xyz.com:80/ https://zyx.com
+	route add svc *.d.a.b.com http://test.com
+	`
+
+	tbl, err := NewTable(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tests = []struct {
+		req *http.Request
+		dst string
+	}{
+
+		// match on host and path with and without trailing slash
+		{&http.Request{Host: "abc.com", URL: mustParse("/")}, "https://abc.com/"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/bar")}, "https://abc.com/bar"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo")}, "https://abc.com/foo"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo/")}, "https://abc.com/foo/"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo/bar")}, "https://abc.com/foo/bar"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo/bar/")}, "https://abc.com/foo/bar/"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://foo.com:1000"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/bar"), TLS: &tls.ConnectionState{}}, "http://foo.com:1000"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo"), TLS: &tls.ConnectionState{}}, "http://foo.com:1500"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo/"), TLS: &tls.ConnectionState{}}, "http://foo.com:2000"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo/bar"), TLS: &tls.ConnectionState{}}, "http://foo.com:2500"},
+		{&http.Request{Host: "abc.com", URL: mustParse("/foo/bar/"), TLS: &tls.ConnectionState{}}, "http://foo.com:3000"},
+
+		// do not match on host but maybe on path
+		{&http.Request{Host: "def.com", URL: mustParse("/")}, "https://def.com/"},
+		{&http.Request{Host: "def.com", URL: mustParse("/bar")}, "https://def.com/bar"},
+		{&http.Request{Host: "def.com", URL: mustParse("/foo")}, "https://def.com/foo"},
+		{&http.Request{Host: "def.com:443", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://foo.com:7000"},
+		{&http.Request{Host: "def.com:443", URL: mustParse("/bar"), TLS: &tls.ConnectionState{}}, "http://foo.com:7000"},
+		{&http.Request{Host: "def.com:443", URL: mustParse("/foo"), TLS: &tls.ConnectionState{}}, "http://foo.com:7000"},
+
+		// do not match on host but maybe on path
+		{&http.Request{Host: "def.io", URL: mustParse("/")}, "https://def.io/"},
+		{&http.Request{Host: "def.io", URL: mustParse("/bar")}, "https://def.io/bar"},
+		{&http.Request{Host: "def.io", URL: mustParse("/foo")}, "https://def.io/foo"},
+		{&http.Request{Host: "def.io:443", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://foo.com:800"},
+		{&http.Request{Host: "def.io:443", URL: mustParse("/bar"), TLS: &tls.ConnectionState{}}, "http://foo.com:800"},
+		{&http.Request{Host: "def.io:443", URL: mustParse("/foo"), TLS: &tls.ConnectionState{}}, "http://foo.com:900"},
+
+		// strip default port
+		{&http.Request{Host: "abc.com:80", URL: mustParse("/")}, "http://foo.com:1000"},
+		{&http.Request{Host: "abc.com:443", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://foo.com:1000"},
+
+		// not using default port
+		{&http.Request{Host: "abc.com:443", URL: mustParse("/")}, "https://abc.com:443/"},
+		{&http.Request{Host: "abc.com:80", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "https://abc.com:80/"},
+
+		// glob match the host
+		{&http.Request{Host: "x.abc.com", URL: mustParse("/")}, "https://x.abc.com/"},
+		{&http.Request{Host: "y.abc.com", URL: mustParse("/abc")}, "https://y.abc.com/abc"},
+		{&http.Request{Host: "x.abc.com", URL: mustParse("/foo/")}, "https://x.abc.com/foo/"},
+		{&http.Request{Host: "y.abc.com", URL: mustParse("/foo/")}, "https://y.abc.com/foo/"},
+		{&http.Request{Host: ".abc.com", URL: mustParse("/foo/")}, "https://.abc.com/foo/"},
+		{&http.Request{Host: "x.y.abc.com", URL: mustParse("/foo/")}, "https://x.y.abc.com/foo/"},
+		{&http.Request{Host: "y.abc.com:80", URL: mustParse("/foo/")}, "http://foo.com:5000"},
+		{&http.Request{Host: "y.abc.com:443", URL: mustParse("/foo/"), TLS: &tls.ConnectionState{}}, "http://foo.com:5000"},
+		{&http.Request{Host: "x.abc.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://foo.com:4000"},
+		{&http.Request{Host: "y.abc.com", URL: mustParse("/abc"), TLS: &tls.ConnectionState{}}, "http://foo.com:4000"},
+		{&http.Request{Host: "x.abc.com", URL: mustParse("/foo/"), TLS: &tls.ConnectionState{}}, "http://foo.com:5000"},
+		{&http.Request{Host: "y.abc.com", URL: mustParse("/foo/"), TLS: &tls.ConnectionState{}}, "http://foo.com:5000"},
+		{&http.Request{Host: ".abc.com", URL: mustParse("/foo/"), TLS: &tls.ConnectionState{}}, "http://foo.com:5000"},
+		{&http.Request{Host: "x.y.abc.com", URL: mustParse("/foo/"), TLS: &tls.ConnectionState{}}, "http://foo.com:5000"},
+
+		// exact match has precedence over glob match
+		{&http.Request{Host: "z.abc.com", URL: mustParse("/foo/")}, "https://z.abc.com/foo/"},
+		{&http.Request{Host: "z.abc.com", URL: mustParse("/foo/"), TLS: &tls.ConnectionState{}}, "http://foo.com:3100"},
+
+		// explicit port on route
+		{&http.Request{Host: "s.xyz.com", URL: mustParse("/")}, "https://s.xyz.com/"},
+		{&http.Request{Host: "s.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "https://xyz.com"},
+
+		// just defined 80
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/")}, "https://zyx.com"},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "https://xyz.com"},
+		{&http.Request{Host: "test.d.a.b.com", URL: mustParse("/")}, "https://test.d.a.b.com/"},
+		{&http.Request{Host: "test.d.a.b.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, "http://test.com"},
+	}
+
+	for i, tt := range tests {
+		target := tbl.Lookup(tt.req, "", rndPicker, prefixMatcher)
+		url := target.URL
+		if target.RedirectURL != nil {
+			url = target.RedirectURL
+		}
+		if got, want := url.String(), tt.dst; got != want {
+			t.Errorf("%d: got %v want %v", i, got, want)
+		}
+	}
+}
+
+func TestMatchinHostStr(t *testing.T) {
+	s := `
+	route add redirect *:80/ https://$host/$path opts "redirect=301"
+	route add svc / http://foo.com:800
+	route add svc /foo http://foo.com:900
+	route add svc *.com/ http://foo.com:7000
+	route add svc abc.com/ http://foo.com:1000
+	route add svc abc.com/foo http://foo.com:1500
+	route add svc abc.com/foo/ http://foo.com:2000
+	route add svc abc.com/foo/bar http://foo.com:2500
+	route add svc abc.com/foo/bar/ http://foo.com:3000
+	route add svc z.abc.com/foo/ http://foo.com:3100
+	route add svc *.abc.com/ http://foo.com:4000
+	route add svc *.abc.com/foo/ http://foo.com:5000
+	route add svc *.xyz.com/ https://xyz.com
+	route add svc foo.xyz.com:80/ https://zyx.com
+	route add svc *.a.b.com http://test.com
+	route add svc *.b.com http://test.com
+	route add svc *.com http://test.com
+	route add svc *.abbc.b.com http://test.com
+	route add svc *.d.a.b.com http://test.com
+	`
+	tbl, err := NewTable(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tests = []struct {
+		req *http.Request
+		dst []string
+	}{
+		{&http.Request{Host: "abc.com", URL: mustParse("/")}, []string{"abc.com", "*.com", "*:80"}},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/")}, []string{"foo.xyz.com:80", "*.xyz.com", "*.com", "*:80"}},
+		{&http.Request{Host: "test.d.a.b.com", URL: mustParse("/")}, []string{"*.d.a.b.com", "*.a.b.com", "*.b.com", "*.com", "*:80"}},
+		{&http.Request{Host: "d.a.b.com", URL: mustParse("/")}, []string{"*.a.b.com", "*.b.com", "*.com", "*:80"}},
+		{&http.Request{Host: "abc.com:80", URL: mustParse("/")}, []string{"abc.com", "*.com", "*:80"}},
+		{&http.Request{Host: "def.io:443", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, []string{}},
+		{&http.Request{Host: "def.io", URL: mustParse("/")}, []string{"*:80"}},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/")}, []string{"foo.xyz.com:80", "*.xyz.com", "*.com", "*:80"}},
+		{&http.Request{Host: "foo.xyz.com", URL: mustParse("/"), TLS: &tls.ConnectionState{}}, []string{"*.xyz.com", "*.com"}},
+	}
+	for i, tt := range tests {
+		hosts := tbl.matchingHostsStr(tt.req.Host, tt.req.TLS != nil)
+		if len(hosts) != len(tt.dst) {
+			t.Errorf("%d: got %v want %v", i, hosts, tt.dst)
+			break
+		}
+		check := 0
+		for k, v := range hosts {
+			if v != tt.dst[k] {
+				check++
+			}
+		}
+		if check > 0 {
+			t.Errorf("%d: got %v want %v", i, hosts, tt.dst)
+		}
+	}
+}

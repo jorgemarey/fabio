@@ -293,40 +293,54 @@ func normalizeHost(host string, tls bool) string {
 	return host
 }
 
-// matchingHosts returns all keys (host name patterns) from the
-// routing table which match the normalized request hostname.
-func (t Table) matchingHosts(req *http.Request) (hosts []string) {
-	host := normalizeHost(req.Host, req.TLS != nil)
+type byDots []string
+
+func (s byDots) Len() int {
+	return len(s)
+}
+func (s byDots) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+
+}
+func (s byDots) Less(i, j int) bool {
+	if strings.Count(s[i], ".") < strings.Count(s[j], ".") {
+		return false
+	}
+	if strings.Count(s[i], ".") > strings.Count(s[j], ".") {
+		return true
+	}
+	return s[i] < s[j]
+}
+
+// matchingHostsStr returns all keys (host name patterns) from the
+// routing table which match the normalized host and takes if it is TLS into account.
+func (t Table) matchingHostsStr(host string, isTLS bool) (hosts []string) {
+	host = normalizeHost(host, isTLS)
 	for pattern := range t {
-		normpat := normalizeHost(pattern, req.TLS != nil)
-		// TODO setup compiled GLOBs in a separate MAP
-		// TODO Issue #548
+		normpat := normalizeHost(pattern, isTLS)
 		g := glob.MustCompile(normpat)
 		if g.Match(host) {
 			hosts = append(hosts, pattern)
 		}
 	}
-
-	if len(hosts) < 2 {
-		return
-	}
-
-	// Issue 506: multiple glob patterns hosts in wrong order
-	//
-	// DNS names have their most specific part at the front. In order to sort
-	// them from most specific to least specific a lexicographic sort will
-	// return the wrong result since it sorts by host name. *.foo.com will come
-	// before *.a.foo.com even though the latter is more specific. To achieve
-	// the correct result we need to reverse the strings, sort them and then
-	// reverse them again.
-	for i, h := range hosts {
-		hosts[i] = Reverse(h)
-	}
 	sort.Sort(sort.Reverse(sort.StringSlice(hosts)))
-	for i, h := range hosts {
-		hosts[i] = Reverse(h)
+	i := -1
+	for j, v := range hosts {
+		if strings.HasPrefix(v, "*") {
+			i = j
+			break
+		}
 	}
-	return
+	if i != -1 {
+		sort.Sort(byDots(hosts[i:]))
+	}
+	return hosts
+}
+
+// matchingHosts returns all keys (host name patterns) from the
+// routing table which match the normalized request hostname.
+func (t Table) matchingHosts(req *http.Request) (hosts []string) {
+	return t.matchingHostsStr(req.Host, req.TLS != nil)
 }
 
 // Issue 548 - Added separate func
@@ -347,15 +361,15 @@ func (t Table) matchingHostNoGlob(req *http.Request) (hosts []string) {
 	return
 }
 
-// Reverse returns its argument string reversed rune-wise left to right.
-//
-// taken from https://github.com/golang/example/blob/master/stringutil/reverse.go
-func Reverse(s string) string {
-	r := []rune(s)
-	for i, j := 0, len(r)-1; i < len(r)/2; i, j = i+1, j-1 {
-		r[i], r[j] = r[j], r[i]
+func checkHTTPRedirect(req *http.Request, hosts []string) string {
+	if !strings.Contains(req.Host, ":") && req.TLS == nil {
+		for _, h := range hosts {
+			if strings.HasSuffix(h, ":80") {
+				return h
+			}
+		}
 	}
-	return string(r)
+	return ""
 }
 
 // Lookup finds a target url based on the current matcher and picker
@@ -363,15 +377,7 @@ func Reverse(s string) string {
 // and if none matches then it falls back to generic routes without
 // a host. This is useful for a catch-all '/' rule.
 func (t Table) Lookup(req *http.Request, trace string, pick picker, match matcher, globDisabled bool) (target *Target) {
-
 	var hosts []string
-	if trace != "" {
-		if len(trace) > 16 {
-			trace = trace[:15]
-		}
-		log.Printf("[TRACE] %s Tracing %s%s", trace, req.Host, req.URL.Path)
-	}
-
 	// find matching hosts for the request
 	// and add "no host" as the fallback option
 	// if globDisabled then match without Glob
@@ -381,9 +387,15 @@ func (t Table) Lookup(req *http.Request, trace string, pick picker, match matche
 	} else {
 		hosts = t.matchingHosts(req)
 	}
-
+	redir := checkHTTPRedirect(req, hosts)
+	if redir != "" {
+		hosts = append([]string{redir}, hosts...)
+	}
 	if trace != "" {
-		log.Printf("[TRACE] %s Matching hosts: %v", trace, hosts)
+		if len(trace) > 16 {
+			trace = trace[:15]
+		}
+		log.Printf("[TRACE] %s Tracing %s%s", trace, req.Host, req.URL.Path)
 	}
 	hosts = append(hosts, "")
 	for _, h := range hosts {
@@ -406,6 +418,16 @@ func (t Table) Lookup(req *http.Request, trace string, pick picker, match matche
 		log.Printf("[TRACE] %s Routing to service %s on %s", trace, target.Service, target.URL)
 	}
 
+	return target
+}
+
+func (t Table) LookupHostGlob(host string, pick picker) (target *Target) {
+	hosts := t.matchingHostsStr(host, true)
+	for _, h := range hosts {
+		if target = t.lookup(h, "/", "", pick, prefixMatcher); target != nil {
+			break
+		}
+	}
 	return target
 }
 

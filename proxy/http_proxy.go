@@ -114,6 +114,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Host:   t.URL.Host,
 		Path:   r.URL.Path,
 	}
+
 	if t.URL.RawQuery == "" || r.URL.RawQuery == "" {
 		targetURL.RawQuery = t.URL.RawQuery + r.URL.RawQuery
 	} else {
@@ -150,7 +151,6 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if t.TLSSkipVerify {
 		tr = p.InsecureTransport
 	}
-
 	var h http.Handler
 	switch {
 	case upgrade == "websocket" || upgrade == "Websocket":
@@ -169,7 +169,11 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h = newHTTPProxy(targetURL, tr, p.Config.FlushInterval)
 
 	default:
-		h = newHTTPProxy(targetURL, tr, p.Config.GlobalFlushInterval)
+		flushInterval := p.Config.GlobalFlushInterval
+		if t.FlushInterval != 0 {
+			flushInterval = t.FlushInterval
+		}
+		h = newHTTPProxy(targetURL, tr, flushInterval)
 	}
 
 	if p.Config.GZIPContentTypes != nil {
@@ -245,6 +249,10 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 func (rw *responseWriter) WriteHeader(statusCode int) {
 	rw.w.WriteHeader(statusCode)
 	rw.code = statusCode
+}
+
+func (rw *responseWriter) Flush() {
+	rw.w.(http.Flusher).Flush()
 }
 
 var errNoHijacker = errors.New("not a hijacker")
