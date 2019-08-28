@@ -113,6 +113,7 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 	var listenerValue string
 	var uiListenerValue string
 	var certSourcesValue string
+	var authSchemesValue string
 	var readTimeout, writeTimeout time.Duration
 	var gzipContentTypesValue string
 
@@ -140,6 +141,7 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 	f.DurationVar(&writeTimeout, "proxy.writetimeout", defaultValues.WriteTimeout, "write timeout for outgoing responses")
 	f.DurationVar(&cfg.Proxy.FlushInterval, "proxy.flushinterval", defaultConfig.Proxy.FlushInterval, "flush interval for streaming responses")
 	f.DurationVar(&cfg.Proxy.GlobalFlushInterval, "proxy.globalflushinterval", defaultConfig.Proxy.GlobalFlushInterval, "flush interval for non-streaming responses")
+	f.StringVar(&authSchemesValue, "proxy.auth", defaultValues.AuthSchemesValue, "auth schemes")
 	f.StringVar(&cfg.Log.AccessFormat, "log.access.format", defaultConfig.Log.AccessFormat, "access log format")
 	f.StringVar(&cfg.Log.AccessTarget, "log.access.target", defaultConfig.Log.AccessTarget, "access log target")
 	f.StringVar(&cfg.Log.RoutesFormat, "log.routes.format", defaultConfig.Log.RoutesFormat, "log format of routing table updates")
@@ -157,6 +159,7 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 	f.StringVar(&cfg.Metrics.Circonus.APIURL, "metrics.circonus.apiurl", defaultConfig.Metrics.Circonus.APIURL, "Circonus API URL")
 	f.StringVar(&cfg.Metrics.Circonus.BrokerID, "metrics.circonus.brokerid", defaultConfig.Metrics.Circonus.BrokerID, "Circonus Broker ID")
 	f.StringVar(&cfg.Metrics.Circonus.CheckID, "metrics.circonus.checkid", defaultConfig.Metrics.Circonus.CheckID, "Circonus Check ID")
+	f.StringVar(&cfg.Metrics.Circonus.SubmissionURL, "metrics.circonus.submissionurl", defaultConfig.Metrics.Circonus.SubmissionURL, "Circonus Check SubmissionURL")
 	f.StringVar(&cfg.Registry.Backend, "registry.backend", defaultConfig.Registry.Backend, "registry backend")
 	f.DurationVar(&cfg.Registry.Timeout, "registry.timeout", defaultConfig.Registry.Timeout, "timeout for registry to become available")
 	f.DurationVar(&cfg.Registry.Retry, "registry.retry", defaultConfig.Registry.Retry, "retry interval during startup")
@@ -179,6 +182,7 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 	f.BoolVar(&cfg.Registry.Consul.CheckTLSSkipVerify, "registry.consul.register.checkTLSSkipVerify", defaultConfig.Registry.Consul.CheckTLSSkipVerify, "service check TLS verification")
 	f.StringVar(&cfg.Registry.Consul.CheckDeregisterCriticalServiceAfter, "registry.consul.register.checkDeregisterCriticalServiceAfter", defaultConfig.Registry.Consul.CheckDeregisterCriticalServiceAfter, "critical service deregistration timeout")
 	f.StringVar(&cfg.Registry.Consul.ChecksRequired, "registry.consul.checksRequired", defaultConfig.Registry.Consul.ChecksRequired, "number of checks which must pass: one or all")
+	f.IntVar(&cfg.Registry.Consul.ServiceMonitors, "registry.consul.serviceMonitors", defaultConfig.Registry.Consul.ServiceMonitors, "concurrency for route updates")
 	f.IntVar(&cfg.Runtime.GOGC, "runtime.gogc", defaultConfig.Runtime.GOGC, "sets runtime.GOGC")
 	f.IntVar(&cfg.Runtime.GOMAXPROCS, "runtime.gomaxprocs", defaultConfig.Runtime.GOMAXPROCS, "sets runtime.GOMAXPROCS")
 	f.StringVar(&cfg.UI.Access, "ui.access", defaultConfig.UI.Access, "access mode, one of [ro, rw]")
@@ -187,6 +191,13 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 	f.StringVar(&cfg.UI.Title, "ui.title", defaultConfig.UI.Title, "optional title for the UI")
 	f.StringVar(&cfg.ProfileMode, "profile.mode", defaultConfig.ProfileMode, "enable profiling mode, one of [cpu, mem, mutex, block]")
 	f.StringVar(&cfg.ProfilePath, "profile.path", defaultConfig.ProfilePath, "path to profile dump file")
+	f.BoolVar(&cfg.Tracing.TracingEnabled, "tracing.TracingEnabled", defaultConfig.Tracing.TracingEnabled, "Enable/Disable OpenTrace, one of [true, false]")
+	f.StringVar(&cfg.Tracing.CollectorType, "tracing.CollectorType", defaultConfig.Tracing.CollectorType, "OpenTrace Collector Type, one of [http, kafka]")
+	f.StringVar(&cfg.Tracing.ConnectString, "tracing.ConnectString", defaultConfig.Tracing.ConnectString, "OpenTrace Collector host:port")
+	f.StringVar(&cfg.Tracing.ServiceName, "tracing.ServiceName", defaultConfig.Tracing.ServiceName, "Service name to embed in OpenTrace span")
+	f.StringVar(&cfg.Tracing.Topic, "tracing.Topic", defaultConfig.Tracing.Topic, "OpenTrace Collector Kafka Topic")
+	f.Float64Var(&cfg.Tracing.SamplerRate, "tracing.SamplerRate", defaultConfig.Tracing.SamplerRate, "OpenTrace sample rate percentage in decimal form")
+	f.StringVar(&cfg.Tracing.SpanHost, "tracing.SpanHost", defaultConfig.Tracing.SpanHost, "Host:Port info to add to spans")
 	f.BoolVar(&cfg.GlobMatchingDisabled, "glob.matching.disabled", defaultConfig.GlobMatchingDisabled, "Disable Glob Matching on routes, one of [true, false]")
 
 	// deprecated flags
@@ -213,6 +224,14 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 		return nil, err
 	}
 
+	authSchemes, err := parseAuthSchemes(authSchemesValue)
+
+	if err != nil {
+		return nil, err
+	}
+
+	cfg.Proxy.AuthSchemes = authSchemes
+
 	if uiListenerValue != "" {
 		kvs, err := parseKVSlice(uiListenerValue)
 		if err != nil {
@@ -237,6 +256,10 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 		cfg.Registry.Consul.CheckScheme = "https"
 	}
 
+	if cfg.Registry.Consul.ServiceMonitors <= 0 {
+		cfg.Registry.Consul.ServiceMonitors = 1
+	}
+
 	if gzipContentTypesValue != "" {
 		cfg.Proxy.GZIPContentTypes, err = regexp.Compile(gzipContentTypesValue)
 		if err != nil {
@@ -248,7 +271,7 @@ func load(cmdline, environ, envprefix []string, props *properties.Properties) (c
 		return nil, fmt.Errorf("invalid proxy.strategy: %s", cfg.Proxy.Strategy)
 	}
 
-	if cfg.Proxy.Matcher != "prefix" && cfg.Proxy.Matcher != "glob" {
+	if cfg.Proxy.Matcher != "prefix" && cfg.Proxy.Matcher != "glob" && cfg.Proxy.Matcher != "iprefix" {
 		return nil, fmt.Errorf("invalid proxy.matcher: %s", cfg.Proxy.Matcher)
 	}
 
@@ -322,7 +345,7 @@ func parseListen(cfg map[string]string, cs map[string]CertSource, readTimeout, w
 		case "proto":
 			l.Proto = v
 			switch l.Proto {
-			case "tcp", "tcp+sni", "http", "https":
+			case "tcp", "tcp+sni", "http", "https", "grpc", "grpcs":
 				// ok
 			default:
 				return Listen{}, fmt.Errorf("unknown protocol %q", v)
@@ -369,6 +392,14 @@ func parseListen(cfg map[string]string, cs map[string]CertSource, readTimeout, w
 				return Listen{}, err
 			}
 			l.TLSCiphers = c
+		case "pxyproto":
+			l.ProxyProto = (v == "true")
+		case "pxytimeout":
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return Listen{}, err
+			}
+			l.ProxyHeaderTimeout = d
 		}
 	}
 
@@ -378,11 +409,14 @@ func parseListen(cfg map[string]string, cs map[string]CertSource, readTimeout, w
 	if l.Addr == "" {
 		return Listen{}, fmt.Errorf("need listening host:port")
 	}
-	if csName != "" && l.Proto != "https" && l.Proto != "tcp" {
-		return Listen{}, fmt.Errorf("cert source requires proto 'https' or 'tcp'")
+	if csName != "" && l.Proto != "https" && l.Proto != "tcp" && l.Proto != "grpcs" {
+		return Listen{}, fmt.Errorf("cert source requires proto 'https', 'tcp' or 'grpcs'")
 	}
 	if csName == "" && l.Proto == "https" {
 		return Listen{}, fmt.Errorf("proto 'https' requires cert source")
+	}
+	if csName == "" && l.Proto == "grpcs" {
+		return Listen{}, fmt.Errorf("proto 'grpcs' requires cert source")
 	}
 	if cs[csName].Type == "vault-pki" && !l.StrictMatch {
 		// Without StrictMatch the first issued certificate is used for all
@@ -390,7 +424,11 @@ func parseListen(cfg map[string]string, cs map[string]CertSource, readTimeout, w
 		log.Printf("[INFO] vault-pki requires strictmatch; enabling strictmatch for listener %s", l.Addr)
 		l.StrictMatch = true
 	}
-
+	if l.ProxyProto && l.ProxyHeaderTimeout == 0 {
+		// We should define a safe default if proxy-protocol was enabled but no header timeout was set.
+		// See https://github.com/fabiolb/fabio/issues/524 for more information.
+		l.ProxyHeaderTimeout = 250 * time.Millisecond
+	}
 	return
 }
 
@@ -531,6 +569,62 @@ func parseCertSource(cfg map[string]string) (c CertSource, err error) {
 		// no-op
 	default:
 		return CertSource{}, fmt.Errorf("unknown cert source type %s", c.Type)
+	}
+
+	return
+}
+
+func parseAuthSchemes(cfgs string) (as map[string]AuthScheme, err error) {
+	kvs, err := parseKVSlice(cfgs)
+	if err != nil {
+		return nil, err
+	}
+	as = map[string]AuthScheme{}
+	for _, cfg := range kvs {
+		src, err := parseAuthScheme(cfg)
+		if err != nil {
+			return nil, err
+		}
+		as[src.Name] = src
+	}
+	return
+}
+
+func parseAuthScheme(cfg map[string]string) (a AuthScheme, err error) {
+	if cfg == nil {
+		return
+	}
+
+	for k, v := range cfg {
+		switch k {
+		case "name":
+			a.Name = v
+		case "type":
+			a.Type = v
+		}
+	}
+
+	if a.Name == "" {
+		return AuthScheme{}, errors.New("missing 'name' in auth")
+	}
+
+	switch a.Type {
+	case "":
+		return AuthScheme{}, fmt.Errorf("missing 'type' in auth '%s'", a.Name)
+	case "basic":
+		a.Basic = BasicAuth{
+			File:  cfg["file"],
+			Realm: cfg["realm"],
+		}
+
+		if a.Basic.File == "" {
+			return AuthScheme{}, fmt.Errorf("missing 'file' in auth '%s'", a.Name)
+		}
+		if a.Basic.Realm == "" {
+			a.Basic.Realm = a.Name
+		}
+	default:
+		return AuthScheme{}, fmt.Errorf("unknown auth type '%s'", a.Type)
 	}
 
 	return

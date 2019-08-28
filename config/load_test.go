@@ -99,6 +99,13 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
+			args: []string{"-proxy.addr", ":5555;proto=grpc"},
+			cfg: func(cfg *Config) *Config {
+				cfg.Listen = []Listen{{Addr: ":5555", Proto: "grpc"}}
+				return cfg
+			},
+		},
+		{
 			desc: "-proxy.addr with tls configs",
 			args: []string{"-proxy.addr", `:5555;rt=1s;wt=2s;tlsmin=0x0300;tlsmax=0x305;tlsciphers="0x123,0x456"`},
 			cfg: func(cfg *Config) *Config {
@@ -252,6 +259,40 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
+			desc: "-proxy.auth with source basic",
+			args: []string{"-proxy.auth", "name=foo;type=basic;file=/some/file/on/disk;realm=realm"},
+			cfg: func(cfg *Config) *Config {
+				cfg.Proxy.AuthSchemes = map[string]AuthScheme{
+					"foo": {
+						Name: "foo",
+						Type: "basic",
+						Basic: BasicAuth{
+							File:  "/some/file/on/disk",
+							Realm: "realm",
+						},
+					},
+				}
+				return cfg
+			},
+		},
+		{
+			desc: "-proxy.auth with source basic and no realm specified",
+			args: []string{"-proxy.auth", "name=foo;type=basic;file=/some/file/on/disk"},
+			cfg: func(cfg *Config) *Config {
+				cfg.Proxy.AuthSchemes = map[string]AuthScheme{
+					"foo": {
+						Name: "foo",
+						Type: "basic",
+						Basic: BasicAuth{
+							File:  "/some/file/on/disk",
+							Realm: "foo",
+						},
+					},
+				}
+				return cfg
+			},
+		},
+		{
 			desc: "issue 305",
 			args: []string{
 				"-proxy.addr", ":443;cs=consul-cs,:80,:2375;proto=tcp+sni",
@@ -303,6 +344,13 @@ func TestLoad(t *testing.T) {
 			args: []string{"-proxy.matcher", "glob"},
 			cfg: func(cfg *Config) *Config {
 				cfg.Proxy.Matcher = "glob"
+				return cfg
+			},
+		},
+		{
+			args: []string{"-proxy.matcher", "iprefix"},
+			cfg: func(cfg *Config) *Config {
+				cfg.Proxy.Matcher = "iprefix"
 				return cfg
 			},
 		},
@@ -612,6 +660,13 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
+			args: []string{"-registry.consul.serviceMonitors", "5"},
+			cfg: func(cfg *Config) *Config {
+				cfg.Registry.Consul.ServiceMonitors = 5
+				return cfg
+			},
+		},
+		{
 			args: []string{"-log.access.format", "foobar"},
 			cfg: func(cfg *Config) *Config {
 				cfg.Log.AccessFormat = "foobar"
@@ -727,6 +782,13 @@ func TestLoad(t *testing.T) {
 			args: []string{"-metrics.circonus.checkid", "value"},
 			cfg: func(cfg *Config) *Config {
 				cfg.Metrics.Circonus.CheckID = "value"
+				return cfg
+			},
+		},
+		{
+			args: []string{"-metrics.circonus.submissionurl", "value"},
+			cfg: func(cfg *Config) *Config {
+				cfg.Metrics.Circonus.SubmissionURL = "value"
 				return cfg
 			},
 		},
@@ -920,16 +982,22 @@ func TestLoad(t *testing.T) {
 			err:  errors.New("proto 'https' requires cert source"),
 		},
 		{
-			desc: "-proxy.addr with cert source and proto 'http' requires proto 'https' or 'tcp'",
-			args: []string{"-proxy.addr", ":5555;cs=name;proto=http", "-proxy.cs", "cs=name;type=path;cert=value"},
+			desc: "-proxy.addr with proto 'grpcs' requires cert source",
+			args: []string{"-proxy.addr", ":5555;proto=grpcs"},
 			cfg:  func(cfg *Config) *Config { return nil },
-			err:  errors.New("cert source requires proto 'https' or 'tcp'"),
+			err:  errors.New("proto 'grpcs' requires cert source"),
 		},
 		{
-			desc: "-proxy.addr with cert source and proto 'tcp+sni' requires proto 'https' or 'tcp'",
+			desc: "-proxy.addr with cert source and proto 'http' requires proto 'https', 'tcp', or 'grpcs'",
+			args: []string{"-proxy.addr", ":5555;cs=name;proto=http", "-proxy.cs", "cs=name;type=path;cert=value"},
+			cfg:  func(cfg *Config) *Config { return nil },
+			err:  errors.New("cert source requires proto 'https', 'tcp' or 'grpcs'"),
+		},
+		{
+			desc: "-proxy.addr with cert source and proto 'tcp+sni' requires proto 'https', 'tcp' or 'grpcs'",
 			args: []string{"-proxy.addr", ":5555;cs=name;proto=tcp+sni", "-proxy.cs", "cs=name;type=path;cert=value"},
 			cfg:  func(cfg *Config) *Config { return nil },
-			err:  errors.New("cert source requires proto 'https' or 'tcp'"),
+			err:  errors.New("cert source requires proto 'https', 'tcp' or 'grpcs'"),
 		},
 		{
 			desc: "-proxy.noroutestatus too small",
@@ -942,6 +1010,24 @@ func TestLoad(t *testing.T) {
 			args: []string{"-proxy.noroutestatus", "1000"},
 			cfg:  func(cfg *Config) *Config { return nil },
 			err:  errors.New("proxy.noroutestatus must be between 100 and 999"),
+		},
+		{
+			desc: "-proxy.auth with unknown auth type 'foo'",
+			args: []string{"-proxy.auth", "name=myauth;type=foo"},
+			cfg:  func(cfg *Config) *Config { return nil },
+			err:  errors.New("unknown auth type 'foo'"),
+		},
+		{
+			desc: "-proxy.auth with missing name",
+			args: []string{"-proxy.auth", "type=basic;file=/some/file;realm=realm"},
+			cfg:  func(cfg *Config) *Config { return nil },
+			err:  errors.New("missing 'name' in auth"),
+		},
+		{
+			desc: "-proxy.auth basic with missing file",
+			args: []string{"-proxy.auth", "name=foo;type=basic;realm=realm"},
+			cfg:  func(cfg *Config) *Config { return nil },
+			err:  errors.New("missing 'file' in auth 'foo'"),
 		},
 		{
 			args: []string{"-cfg"},

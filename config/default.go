@@ -9,6 +9,7 @@ import (
 var defaultValues = struct {
 	ListenerValue         string
 	CertSourcesValue      string
+	AuthSchemesValue      string
 	ReadTimeout           time.Duration
 	WriteTimeout          time.Duration
 	UIListenerValue       string
@@ -44,6 +45,7 @@ var defaultConfig = &Config{
 		FlushInterval:       time.Second,
 		GlobalFlushInterval: 0,
 		LocalIP:             LocalIPString(),
+		AuthSchemes:         map[string]AuthScheme{},
 	},
 	Registry: Registry{
 		Backend: "consul",
@@ -57,6 +59,7 @@ var defaultConfig = &Config{
 			ServiceAddr:                         ":9998",
 			ServiceName:                         "fabio",
 			ServiceStatus:                       []string{"passing"},
+			ServiceMonitors:                     1,
 			CheckInterval:                       time.Second,
 			CheckTimeout:                        3 * time.Second,
 			CheckScheme:                         "http",
@@ -77,5 +80,15 @@ var defaultConfig = &Config{
 		},
 		Color:  "light-green",
 		Access: "rw",
+	},
+
+	Tracing: Tracing{
+		TracingEnabled: false,
+		CollectorType:  "http",
+		ConnectString:  "http://localhost:9411/api/v1/spans",
+		ServiceName:    "Fabiolb",
+		Topic:          "Fabiolb-Kafka-Topic",
+		SamplerRate:    -1,
+		SpanHost:       "localhost:9998",
 	},
 }

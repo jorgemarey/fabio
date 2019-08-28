@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/fabiolb/fabio/config"
 	"github.com/fabiolb/fabio/proxy/tcp"
 )
@@ -55,10 +57,11 @@ func Shutdown(timeout time.Duration) {
 }
 
 func ListenAndServeHTTP(l config.Listen, h http.Handler, cfg *tls.Config) error {
-	ln, err := ListenTCP(l.Addr, cfg)
+	ln, err := ListenTCP(l, cfg)
 	if err != nil {
 		return err
 	}
+
 	srv := &http.Server{
 		Addr:         l.Addr,
 		Handler:      h,
@@ -69,8 +72,21 @@ func ListenAndServeHTTP(l config.Listen, h http.Handler, cfg *tls.Config) error 
 	return serve(ln, srv)
 }
 
+func ListenAndServeGRPC(l config.Listen, opts []grpc.ServerOption, cfg *tls.Config) error {
+	ln, err := ListenTCP(l, cfg)
+	if err != nil {
+		return err
+	}
+
+	srv := &gRPCServer{
+		server: grpc.NewServer(opts...),
+	}
+
+	return serve(ln, srv)
+}
+
 func ListenAndServeTCP(l config.Listen, h tcp.Handler, cfg *tls.Config) error {
-	ln, err := ListenTCP(l.Addr, cfg)
+	ln, err := ListenTCP(l, cfg)
 	if err != nil {
 		return err
 	}

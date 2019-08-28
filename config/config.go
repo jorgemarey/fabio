@@ -14,6 +14,7 @@ type Config struct {
 	Metrics              Metrics
 	UI                   UI
 	Runtime              Runtime
+	Tracing              Tracing
 	ProfileMode          string
 	ProfilePath          string
 	Insecure             bool
@@ -32,15 +33,17 @@ type CertSource struct {
 }
 
 type Listen struct {
-	Addr          string
-	Proto         string
-	ReadTimeout   time.Duration
-	WriteTimeout  time.Duration
-	CertSource    CertSource
-	StrictMatch   bool
-	TLSMinVersion uint16
-	TLSMaxVersion uint16
-	TLSCiphers    []uint16
+	Addr               string
+	Proto              string
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	CertSource         CertSource
+	StrictMatch        bool
+	TLSMinVersion      uint16
+	TLSMaxVersion      uint16
+	TLSCiphers         []uint16
+	ProxyProto         bool
+	ProxyHeaderTimeout time.Duration
 }
 
 type UI struct {
@@ -68,6 +71,7 @@ type Proxy struct {
 	GZIPContentTypes      *regexp.Regexp
 	RequestID             string
 	STSHeader             STSHeader
+	AuthSchemes           map[string]AuthScheme
 }
 
 type STSHeader struct {
@@ -82,11 +86,12 @@ type Runtime struct {
 }
 
 type Circonus struct {
-	APIKey   string
-	APIApp   string
-	APIURL   string
-	CheckID  string
-	BrokerID string
+	APIKey        string
+	APIApp        string
+	APIURL        string
+	CheckID       string
+	BrokerID      string
+	SubmissionURL string
 }
 
 type Log struct {
@@ -145,4 +150,26 @@ type Consul struct {
 	CheckTLSSkipVerify                  bool
 	CheckDeregisterCriticalServiceAfter string
 	ChecksRequired                      string
+	ServiceMonitors                     int
+}
+
+type Tracing struct {
+	TracingEnabled bool
+	CollectorType  string
+	ConnectString  string
+	ServiceName    string
+	Topic          string
+	SamplerRate    float64
+	SpanHost       string
+}
+
+type AuthScheme struct {
+	Name  string
+	Type  string
+	Basic BasicAuth
+}
+
+type BasicAuth struct {
+	Realm string
+	File  string
 }
